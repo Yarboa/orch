@@ -1,0 +1,69 @@
+name: Integration Testing  
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: cs9 x86_64 e2e 
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get -y install podman 
+
+      - name: Checkout sources
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          # Use githash of a tested commit instead of merge commit
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: build hirte tests containers
+        run: |
+          podman run --rm --systemd=always --name hirte-builder \
+          -v  ${PWD}:/hirte:Z -it quay.io/yarboa/hirte-builder:1.0.0 \
+          /bin/bash -c "rm -rf builddir; meson setup builddir; \
+          meson install -C builddir --destdir bin"
+          podman build -f tests/Containerfile -t hirte-image .
+
+      - name: run hirte containers
+        run: |
+          podman run -d --rm -p 2020:2020 --systemd=always --name hirte-mgr \
+          $(podman images *hirte-image --format {{.ID}})
+          podman run -d --rm --systemd=always --name hirte-agent-foo \
+          $(podman images *hirte-image --format {{.ID}})
+          podman run -d --rm --systemd=always --name hirte-agent-bar \
+          $(podman images *hirte-image --format {{.ID}})
+          PODMAN_NET=$(hostname -I | awk '{print $1}')
+          echo "PODMAN_NET=$PODMAN_NET" >> $GITHUB_ENV
+
+      - name: run hirte orchestrator
+        run: |
+          podman exec -t  $(podman ps | grep hirte-mgr | awk '{print $1}') \
+          su - test-user -c  "(/usr/local/bin/hirte -c /hirte/example.ini > mgr.log 2>&1 &)"
+
+      - name: run hirte agent-bar
+        run: |
+          podman exec -t $(podman ps | grep hirte-agent-bar | awk '{print $1}') \
+          su - test-user -c "(/usr/local/bin/hirte-agent -H ${{ env.PODMAN_NET }} \
+          -p 2020 -n bar > bar.log 2>&1 &)"
+          podman exec -it $(podman ps | grep hirte-agent-bar | awk '{print $1}') \
+          /usr/bin/pkill --signal TERM hirte-agent
+          podman exec -w /home/test-user -u test-user -it $(podman ps | grep hirte-agent-bar \
+          | awk '{print $1}') grep "Registered as 'bar'" bar.log
+
+      - name: run hirte agent-foo
+        run: |
+          podman exec -t  $(podman ps | grep hirte-agent-foo | awk '{print $1}') \
+          su - test-user -c  "(/usr/local/bin/hirte-agent -H ${{ env.PODMAN_NET }} \
+          -p 2020 -n foo > foo.log 2>&1 &)"
+          podman exec -it $(podman ps | grep hirte-agent-foo | awk '{print $1}') \
+          /usr/bin/pkill --signal TERM hirte-agent
+          podman exec -w /home/test-user -u test-user -it $(podman ps | grep hirte-agent-foo \
+          | awk '{print $1}') grep "Registered as 'foo'" foo.log
+
