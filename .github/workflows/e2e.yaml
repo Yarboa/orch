@@ -25,7 +25,7 @@ jobs:
 
       - name: build hirte tests containers
         run: |
-          podman run --rm --systemd=always --name hirte-builder \
+          podman run --rm --name hirte-builder \
           -v  ${PWD}:/hirte:Z -it quay.io/yarboa/hirte-builder:1.0.0 \
           /bin/bash -c "rm -rf builddir; meson setup builddir; \
           meson install -C builddir --destdir bin"
@@ -33,37 +33,47 @@ jobs:
 
       - name: run hirte containers
         run: |
-          podman run -d --rm -p 2020:2020 --systemd=always --name hirte-mgr \
+          podman run -d --net podman --rm -p 2020:2020 --name hirte-mgr \
           $(podman images *hirte-image --format {{.ID}})
-          podman run -d --rm --systemd=always --name hirte-agent-foo \
+          podman run -d --net podman --rm --name hirte-agent-foo \
           $(podman images *hirte-image --format {{.ID}})
-          podman run -d --rm --systemd=always --name hirte-agent-bar \
+          podman run -d --net podman --rm --name hirte-agent-bar \
           $(podman images *hirte-image --format {{.ID}})
           PODMAN_NET=$(hostname -I | awk '{print $1}')
           echo "PODMAN_NET=$PODMAN_NET" >> $GITHUB_ENV
 
       - name: run hirte orchestrator
         run: |
-          podman exec -t  $(podman ps | grep hirte-mgr | awk '{print $1}') \
-          su - test-user -c  "(/usr/local/bin/hirte -c /hirte/example.ini > mgr.log 2>&1 &)"
+          podman exec -t  hirte-mgr \
+          su - test-user -c  "(/usr/local/bin/hirte -c /hirte/example-hirte.ini > mgr.log 2>&1 &)"
 
       - name: run hirte agent-bar
         run: |
-          podman exec -t $(podman ps | grep hirte-agent-bar | awk '{print $1}') \
-          su - test-user -c "(/usr/local/bin/hirte-agent -H ${{ env.PODMAN_NET }} \
-          -p 2020 -n bar > bar.log 2>&1 &)"
-          podman exec -it $(podman ps | grep hirte-agent-bar | awk '{print $1}') \
-          /usr/bin/pkill --signal TERM hirte-agent
-          podman exec -w /home/test-user -u test-user -it $(podman ps | grep hirte-agent-bar \
-          | awk '{print $1}') grep "Registered as 'bar'" bar.log
+          # Change node name in config file
+          podman exec -it hirte-agent-bar \
+          sed -i "s/\(Name=\)\(.*\)/\1bar/" /hirte/example-hirte-agent.ini
+          # Change manager address in config file
+          podman exec -it hirte-agent-bar \
+          sed -i "s/\(Host=\)\(.*\)/\1${{ env.PODMAN_NET }}/" /hirte/example-hirte-agent.ini
+          podman exec -t hirte-agent-bar \
+          su - test-user -c "(/usr/local/bin/hirte-agent -c \
+          /hirte/example-hirte-agent.ini > bar.log 2>&1 &)"
+          podman exec -it hirte-agent-bar /usr/bin/pkill --signal TERM hirte-agent
+          podman exec -w /home/test-user -u test-user -it hirte-agent-bar \
+          grep "Registered.* as 'bar'" bar.log
 
       - name: run hirte agent-foo
         run: |
-          podman exec -t  $(podman ps | grep hirte-agent-foo | awk '{print $1}') \
-          su - test-user -c  "(/usr/local/bin/hirte-agent -H ${{ env.PODMAN_NET }} \
-          -p 2020 -n foo > foo.log 2>&1 &)"
-          podman exec -it $(podman ps | grep hirte-agent-foo | awk '{print $1}') \
-          /usr/bin/pkill --signal TERM hirte-agent
-          podman exec -w /home/test-user -u test-user -it $(podman ps | grep hirte-agent-foo \
-          | awk '{print $1}') grep "Registered as 'foo'" foo.log
+          # Change node name in config file
+          podman exec -it hirte-agent-foo \
+          sed -i "s/\(Name=\)\(.*\)/\1foo/" /hirte/example-hirte-agent.ini
+          # Change manager address in config file
+          podman exec -it hirte-agent-foo \
+          sed -i "s/\(Host=\)\(.*\)/\1${{ env.PODMAN_NET }}/" /hirte/example-hirte-agent.ini
+          podman exec -t hirte-agent-foo \
+          su - test-user -c  "(/usr/local/bin/hirte-agent -c \
+          /hirte/example-hirte-agent.ini > foo.log 2>&1 &)"
+          podman exec -it hirte-agent-foo /usr/bin/pkill --signal TERM hirte-agent
+          podman exec -w /home/test-user -u test-user -it hirte-agent-foo \
+          grep "Registered.* as 'foo'" foo.log
 
