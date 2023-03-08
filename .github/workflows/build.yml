@@ -109,3 +109,7 @@ jobs:
         with:
           name: rpm-artifacts
           path: ${{ env.ARTIFACTS_DIR}}
+
+  e2e:
+    needs: rpmbuild
+    uses: ./.github/workflows/e2e.yml
