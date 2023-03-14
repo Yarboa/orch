@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ARTIFACTS_DIR: exported-artifacts
+      PODMAN_NET: 172.18.0.2
     steps:
       - name: Install dependencies
         run: |
@@ -26,7 +27,7 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: rpm-artifacts
-          path: ${{ env.ARTIFACTS_DIR}}
+          path: ${{ env.ARTIFACTS_DIR }}
 
       - name: build hirte tests containers
         run: |
@@ -34,14 +35,13 @@ jobs:
 
       - name: run hirte containers
         run: |
-          podman run -d --net podman --rm -p 2020:2020 --name hirte-mgr \
+          podman network create --subnet 172.18.0.0/24 hirte-test
+          podman run -d --network hirte-test --ip ${{ env.PODMAN_NET }}  --rm -p 2020:2020 --name hirte-mgr \
           $(podman images *hirte-image --format {{.ID}})
-          podman run -d --net podman --rm --name hirte-node-bar \
+          podman run -d --network hirte-test --rm --name hirte-node-bar \
           $(podman images *hirte-image --format {{.ID}})
-          podman run -d --net podman --rm --name hirte-node-foo \
+          podman run -d --network hirte-test --rm --name hirte-node-foo \
           $(podman images *hirte-image --format {{.ID}})
-          PODMAN_NET=$(hostname -I | awk '{print $1}')
-          echo "PODMAN_NET=$PODMAN_NET" >> $GITHUB_ENV
 
       - name: run hirte manager 
         run: |
